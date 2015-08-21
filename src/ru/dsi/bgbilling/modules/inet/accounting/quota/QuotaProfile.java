@@ -207,21 +207,31 @@ public class QuotaProfile {
         this.shiftSlices(now);
 
         TrafficDelta trafficDelta;
+        Slice slice;
+        long trafficDeltaTimeMillis;
         for (Map.Entry<Integer, TrafficDelta> trafficDeltaEntry : trafficDeltas.entrySet()) {
             if(this.trafficTypes.contains(trafficDeltaEntry.getKey())){//Наш тип трафика - берём
                 trafficDelta = trafficDeltaEntry.getValue();
-                Slice slice;
-                for (Object o : this.sliceQueue) {
-                    slice = (Slice)o;
-                    if(trafficDelta.start<slice.endTime){
-                        //Если трафик попал в данный слайс,
-                        // то добавляем туда количество трафика,
-                        // пропорциональное времени
-                        slice.amount.addAndGet(
-                                trafficDelta.amount*
-                                        (Math.min(slice.endTime, trafficDelta.end)-Math.max(trafficDelta.start, slice.endTime-this.slicePeriod))
-                                        /
-                                        (trafficDelta.end - trafficDelta.start));
+
+                synchronized(this.sliceQueue) {
+                    for (Object o : this.sliceQueue) {
+                        slice = (Slice) o;
+                        if (trafficDelta.start < slice.endTime) {
+                            trafficDeltaTimeMillis = trafficDelta.end - trafficDelta.start;
+                            //Избегаем деления на ноль:
+                            if(trafficDeltaTimeMillis == 0L){
+                                trafficDeltaTimeMillis = 1L;
+                            }
+
+                            //Если трафик попал в данный слайс,
+                            // то добавляем туда количество трафика,
+                            // пропорциональное времени
+                            slice.amount.addAndGet(
+                                    trafficDelta.amount *
+                                            (Math.min(slice.endTime, trafficDelta.end) - Math.max(trafficDelta.start, slice.endTime - this.slicePeriod))
+                                            /
+                                            trafficDeltaTimeMillis);
+                        }
                     }
                 }
             }
@@ -258,12 +268,14 @@ public class QuotaProfile {
         Slice slice;
         long now = System.currentTimeMillis();
         long amount = 0;
-        for (Object o : this.sliceQueue) {
-            slice = (Slice)o;
-            if(slice.endTime > now - this.sliceCount * this.slicePeriod){
-                //Берём только слайсы, попадающие в текущий период,
-                // т.к. очередь слайсов может быть устаревшей
-                amount+=slice.amount.get();
+        synchronized(this.sliceQueue){
+            for (Object o : this.sliceQueue) {
+                slice = (Slice)o;
+                if(slice.endTime > now - this.sliceCount * this.slicePeriod){
+                    //Берём только слайсы, попадающие в текущий период,
+                    // т.к. очередь слайсов может быть устаревшей
+                    amount+=slice.amount.get();
+                }
             }
         }
         return amount;
@@ -276,9 +288,11 @@ public class QuotaProfile {
     public List<Slice> getSlices(){
         List<Slice> result = new ArrayList<Slice>();
         Slice s;
-        for (Object o : this.sliceQueue) {
-            s = (Slice)o;
-            result.add(s);
+        synchronized(this.sliceQueue) {
+            for (Object o : this.sliceQueue) {
+                s = (Slice) o;
+                result.add(s);
+            }
         }
         return result;
     }
